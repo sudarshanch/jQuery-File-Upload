@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /*
- * jQuery File Upload Plugin Node.js Example 2.1.2
+ * jQuery File Upload Plugin Node.js Example 2.0
  * https://github.com/blueimp/jQuery-File-Upload
  *
  * Copyright 2012, Sebastian Tschan
@@ -10,8 +10,8 @@
  * http://www.opensource.org/licenses/MIT
  */
 
-/* jshint nomen:false */
-/* global require, __dirname, unescape, console */
+/*jslint nomen: true, regexp: true, unparam: true, stupid: true */
+/*global require, __dirname, unescape, console */
 
 (function (port) {
     'use strict';
@@ -33,7 +33,7 @@
             acceptFileTypes: /.+/i,
             // Files not matched by this regular expression force a download dialog,
             // to prevent executing any scripts in the context of the service domain:
-            inlineFileTypes: /\.(gif|jpe?g|png)$/i,
+            safeFileTypes: /\.(gif|jpe?g|png)$/i,
             imageTypes: /\.(gif|jpe?g|png)$/i,
             imageVersions: {
                 'thumbnail': {
@@ -43,8 +43,7 @@
             },
             accessControl: {
                 allowOrigin: '*',
-                allowMethods: 'OPTIONS, HEAD, GET, POST, PUT, DELETE',
-                allowHeaders: 'Content-Type, Content-Range, Content-Disposition'
+                allowMethods: 'OPTIONS, HEAD, GET, POST, PUT, DELETE'
             },
             /* Uncomment and edit this section to provide the service via HTTPS:
             ssl: {
@@ -68,7 +67,7 @@
             this.name = file.name;
             this.size = file.size;
             this.type = file.type;
-            this.deleteType = 'DELETE';
+            this.delete_type = 'DELETE';
         },
         UploadHandler = function (req, res, callback) {
             this.req = req;
@@ -83,10 +82,6 @@
             res.setHeader(
                 'Access-Control-Allow-Methods',
                 options.accessControl.allowMethods
-            );
-            res.setHeader(
-                'Access-Control-Allow-Headers',
-                options.accessControl.allowHeaders
             );
             var handleResult = function (result, redirect) {
                     if (redirect) {
@@ -142,13 +137,15 @@
             }
         };
     fileServer.respond = function (pathname, status, _headers, files, stat, req, res, finish) {
-        // Prevent browsers from MIME-sniffing the content-type:
-        _headers['X-Content-Type-Options'] = 'nosniff';
-        if (!options.inlineFileTypes.test(files[0])) {
+        if (!options.safeFileTypes.test(files[0])) {
             // Force a download dialog for unsafe file extensions:
-            _headers['Content-Type'] = 'application/octet-stream';
-            _headers['Content-Disposition'] = 'attachment; filename="' +
-                utf8encode(path.basename(files[0])) + '"';
+            res.setHeader(
+                'Content-Disposition',
+                'attachment; filename="' + utf8encode(path.basename(files[0])) + '"'
+            );
+        } else {
+            // Prevent Internet Explorer from MIME-sniffing the content-type:
+            res.setHeader('X-Content-Type-Options', 'nosniff');
         }
         nodeStatic.Server.prototype.respond
             .call(this, pathname, status, _headers, files, stat, req, res, finish);
@@ -176,12 +173,12 @@
             var that = this,
                 baseUrl = (options.ssl ? 'https:' : 'http:') +
                     '//' + req.headers.host + options.uploadUrl;
-            this.url = this.deleteUrl = baseUrl + encodeURIComponent(this.name);
+            this.url = this.delete_url = baseUrl + encodeURIComponent(this.name);
             Object.keys(options.imageVersions).forEach(function (version) {
                 if (_existsSync(
                         options.uploadDir + '/' + version + '/' + that.name
                     )) {
-                    that[version + 'Url'] = baseUrl + version + '/' +
+                    that[version + '_url'] = baseUrl + version + '/' +
                         encodeURIComponent(that.name);
                 }
             });
@@ -194,7 +191,7 @@
             list.forEach(function (name) {
                 var stats = fs.statSync(options.uploadDir + '/' + name),
                     fileInfo;
-                if (stats.isFile() && name[0] !== '.') {
+                if (stats.isFile()) {
                     fileInfo = new FileInfo({
                         name: name,
                         size: stats.size
@@ -226,7 +223,7 @@
         form.uploadDir = options.tmpDir;
         form.on('fileBegin', function (name, file) {
             tmpFiles.push(file.path);
-            var fileInfo = new FileInfo(file);
+            var fileInfo = new FileInfo(file, handler.req, true);
             fileInfo.safeName();
             map[path.basename(file.path)] = fileInfo;
             files.push(fileInfo);
@@ -261,7 +258,7 @@
             });
         }).on('error', function (e) {
             console.log(e);
-        }).on('progress', function (bytesReceived) {
+        }).on('progress', function (bytesReceived, bytesExpected) {
             if (bytesReceived > options.maxPostSize) {
                 handler.req.connection.destroy();
             }
@@ -272,17 +269,15 @@
             fileName;
         if (handler.req.url.slice(0, options.uploadUrl.length) === options.uploadUrl) {
             fileName = path.basename(decodeURIComponent(handler.req.url));
-            if (fileName[0] !== '.') {
-                fs.unlink(options.uploadDir + '/' + fileName, function (ex) {
-                    Object.keys(options.imageVersions).forEach(function (version) {
-                        fs.unlink(options.uploadDir + '/' + version + '/' + fileName);
-                    });
-                    handler.callback({success: !ex});
+            fs.unlink(options.uploadDir + '/' + fileName, function (ex) {
+                Object.keys(options.imageVersions).forEach(function (version) {
+                    fs.unlink(options.uploadDir + '/' + version + '/' + fileName);
                 });
-                return;
-            }
+                handler.callback({success: !ex});
+            });
+        } else {
+            handler.callback({success: false});
         }
-        handler.callback({success: false});
     };
     if (options.ssl) {
         require('https').createServer(options.ssl, serve).listen(port);

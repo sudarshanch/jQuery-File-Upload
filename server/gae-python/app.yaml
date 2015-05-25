@@ -4,9 +4,8 @@ runtime: python27
 api_version: 1
 threadsafe: true
 
-libraries:
-- name: PIL
-  version: latest
+builtins:
+- deferred: on
 
 handlers:
 - url: /(favicon\.ico|robots\.txt)
